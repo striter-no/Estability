@@ -129,7 +129,7 @@ class Transaction:
             return self.verify_sign(self.pub_key), "Signature verification"
 
         if self.ttype == TRANSACTION_TYPE.emission:
-            local_emm = START_EMISSION / max(1, 2 * max(1, block_depth // HALVING_BLOCKS))
+            local_emm = START_EMISSION / max(1, 2 * max(1, block_depth // HALVING_BLOCKS) if block_depth >= HALVING_BLOCKS else 1)
             if self.amount > local_emm:
                 print(f"[>>] too much emission: {self.amount} > {local_emm}")
                 return False, "Too much emission"
