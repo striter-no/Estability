@@ -1,0 +1,10 @@
+dev
+configs
+runtime
+pems
+*.session
+*.sqllite3
+*.sqlite3
+__pycache__
+venv
+.vscode
