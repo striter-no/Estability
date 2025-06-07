@@ -175,10 +175,10 @@ class User:
                                         return None
                                     elif i >= 20: # 2 seconds are gone
                                         if not nolog: print(f"[!] response time out")
-                                        break
+                                        return
                                     elif not status and not msg.startswith("warning"):
                                         if not nolog: print(f"[!] couldn't get new blocks: {msg}")
-                                        break
+                                        return
 
                                     await asyncio.sleep(0.1)
                                     i += 1
@@ -236,14 +236,14 @@ class User:
                                                 continue # Skip malicious ones
 
                                             self.node.transactions.append(t)
-                                        break
+                                        return
                                         # Done
                                     elif i >= 20: # 2 seconds are gone
                                         if not nolog: print(f"[!] response time out")
-                                        break
+                                        return
                                     elif not status and not msg.startswith("warning"):
                                         if not nolog: print(f"[!] couldn't get transaction: {msg}")
-                                        break
+                                        return
 
                                     await asyncio.sleep(0.1)
                                     i += 1
@@ -259,73 +259,94 @@ class User:
 
     async def full_bc_sync(self):
         print(f"[+] starting full BC sync")
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{self.const_node}/update", json={
-                "target": "blockchain",
-                "token": self.token
-            }) as req:
-                status, msg = await self.check_answer(req)
-                answers = []
+        max_retries = 5
+        retry_delay = 5
+        for attempt in range(max_retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{self.const_node}/update", json={
+                        "target": "blockchain",
+                        "token": self.token
+                    }) as req:
+                        status, msg = await self.check_answer(req)
+                        answers = []
 
-                if status:
-                    data = await req.json()
-                    req_uuid = data["uuid"]
-                    print(f"[*] request successeded: <{req_uuid}>")
-                    await asyncio.sleep(3) # Wait for the answer
-                    i = 0
+                        if status:
+                            data = await req.json()
+                            req_uuid = data["uuid"]
+                            print(f"[*] request successeded: <{req_uuid}>")
+                            await asyncio.sleep(3) # Wait for the answer
+                            i = 0
 
-                    while True:
-                        async with session.get(f"{self.const_node}/check", json={
-                            "token": self.token,
-                            "uuid": req_uuid
-                        }) as req_check:
-                            status, msg = await self.check_answer(req_check)
+                            while True:
+                                async with session.get(f"{self.const_node}/check", json={
+                                    "token": self.token,
+                                    "uuid": req_uuid
+                                }) as req_check:
+                                    status, msg = await self.check_answer(req_check)
 
-                            if status:
-                                answers = await req_check.json()
-                                answers = answers["answers"]
-                                print(f"[>] answers getted: {str(answers).replace('\\n', ' ')[:50]}")
-                                break
-                            elif not msg.startswith("warning"):
-                                print(f"[!] couldn't full sync bc and check answers:\n\t{msg}")
-                                raise RuntimeError(f"Couldn't full sync bc and check answers: {msg}")
-                            elif i > 20: # 2 seconds are gone
-                                print(f"[!] no response is getted. response timeout")
-                                break
+                                    if status:
+                                        answers = await req_check.json()
+                                        answers = answers["answers"]
+                                        print(f"[>] answers getted: {str(answers).replace('\\n', ' ')[:50]}")
+                                        return
+                                    elif not msg.startswith("warning"):
+                                        print(f"[!] couldn't full sync bc and check answers:\n\t{msg}")
+                                        raise RuntimeError(f"Couldn't full sync bc and check answers: {msg}")
+                                    elif i > 20: # 2 seconds are gone
+                                        print(f"[!] no response is getted. response timeout")
+                                        return
 
-                            await asyncio.sleep(0.1)
-                            i += 1
-                    if len(answers) != 0: 
-                        raw_blockchain, reason = e_ver.NodeVerificator.fsync_verifacation(answers)
-                        self.node.blockchain = [
-                            e_block.Block.cook(raw) for raw in raw_blockchain
-                        ]
+                                    await asyncio.sleep(0.1)
+                                    i += 1
+                            if len(answers) != 0: 
+                                raw_blockchain, reason = e_ver.NodeVerificator.fsync_verifacation(answers)
+                                self.node.blockchain = [
+                                    e_block.Block.cook(raw) for raw in raw_blockchain
+                                ]
 
-                        print(f"[+] new blockchain [{reason}]: {len(self.node.blockchain)} blocks:\n\t{'\n\t'.join([b.hash for b in self.node.blockchain[::-1][:5]])}")
-                    else:
-                        print(f"[!] no answers are getted. please retry your request")
+                                print(f"[+] new blockchain [{reason}]: {len(self.node.blockchain)} blocks:\n\t{'\n\t'.join([b.hash for b in self.node.blockchain[::-1][:5]])}")
+                            else:
+                                print(f"[!] no answers are getted. please retry your request")
+                        else:
+                            print(f"[!] couldn't full sync bc:\n\t{msg}")
+                            raise RuntimeError(f"Couldn't full sync bc: {msg}")
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                print(f"[!] Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
                 else:
-                    print(f"[!] couldn't full sync bc:\n\t{msg}")
-                    raise RuntimeError(f"Couldn't full sync bc: {msg}")
+                    raise
 
     async def propagate_block(self, block: e_block.Block):
         print(f"[+] starting block propagation")
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{self.const_node}/prp_block", json={
-                "token": self.token,
-                "timestamp": block.timestamp,
-                "nonce": block.nonce,
-                "phash": block.phash,
-                "bits": block.bits,
-                "hash": block.hash,
-                "transactions": [t.rawme() for t in block.transactions]
-            }) as req:
-                status, msg = await self.check_answer(req)
-                if status:
-                    print(f"[>] successfully propagated new block")
+        max_retries = 5
+        retry_delay = 5
+        for attempt in range(max_retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{self.const_node}/prp_block", json={
+                        "token": self.token,
+                        "timestamp": block.timestamp,
+                        "nonce": block.nonce,
+                        "phash": block.phash,
+                        "bits": block.bits,
+                        "hash": block.hash,
+                        "transactions": [t.rawme() for t in block.transactions]
+                    }) as req:
+                        status, msg = await self.check_answer(req)
+                        if status:
+                            print(f"[>] successfully propagated new block")
+                            return
+                        else:
+                            print(f"[!] failed to propagate a new block: {msg}")
+                            raise RuntimeError(f"Failed to propagate a new block: {msg}")
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                print(f"[!] Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
                 else:
-                    print(f"[!] failed to propagate a new block: {msg}")
-                    raise RuntimeError(f"Failed to propagate a new block: {msg}")
+                    raise
 
     async def propagate_transac(self, transac: e_tran.Transaction):
         print(f"[+] starting transaction propagation")
@@ -333,26 +354,48 @@ class User:
 
         for (k, v) in transac.rawme().items():
             data[k] = v
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{self.const_node}/prp_transaction", json = data) as req:
-                status, msg = await self.check_answer(req)
-                if status:
-                    print(f"[>] successfully propagated new transaction")
+        max_retries = 5
+        retry_delay = 5
+        for attempt in range(max_retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{self.const_node}/prp_transaction", json = data) as req:
+                        status, msg = await self.check_answer(req)
+                        if status:
+                            print(f"[>] successfully propagated new transaction")
+                            return
+                        else:
+                            print(f"[!] failed to propagate a new transaction: {msg}")
+                            raise RuntimeError(f"Failed to propagate a new transaction: {msg}")
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                print(f"[!] Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
                 else:
-                    print(f"[!] failed to propagate a new transaction: {msg}")
-                    raise RuntimeError(f"Failed to propagate a new transaction: {msg}")
+                    raise
 
     async def get_token(self):
         print(f"[+] getting token")
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{self.const_node}/regtoken") as req:
-                status, msg = await self.check_answer(req)
-                
-                if status:
-                    data = await req.json()
-                    print(f"[>] new token is getted: <{data['token']}>")
-                    self.token = data["token"]
+        
+        max_retries = 5
+        retry_delay = 5
+        for attempt in range(max_retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{self.const_node}/regtoken") as req:
+                        status, msg = await self.check_answer(req)
+                        
+                        if status:
+                            data = await req.json()
+                            print(f"[>] new token is getted: <{data['token']}>")
+                            self.token = data["token"]
+                            return
+                        else:
+                            print(f"[!] couldn't get a token: {msg}")
+                            raise RuntimeError(f"Couldn't get a token: {msg}")
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                print(f"[!] Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
                 else:
-                    print(f"[!] couldn't get a token: {msg}")
-                    raise RuntimeError(f"Couldn't get a token: {msg}")
+                    raise

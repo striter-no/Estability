@@ -22,7 +22,7 @@ async def main():
     target_chat = await client.get_entity(int(target_chat_id) if (target_chat_id.isdigit() or (target_chat_id[0] == '-' and target_chat_id[1:].isdigit())) else target_chat_id)
 
     with open("./runtime/mass_sign_journal.txt") as f:
-        ofst = 
+        ofst = int(f.read())
 
     async for msg in client.iter_messages(target_chat, offset_id=ofst):
         msg: th.types.Message = msg
@@ -31,14 +31,14 @@ async def main():
             t = api.e_tran.Transaction(
                 api.e_tran.TRANSACTION_TYPE.text,
                 str(msg.from_id.user_id),
-                f"{msg.id}:{target_chat.id}",
+                f"{msg.id}:-100{target_chat.id}",
                 msg.date.timestamp(),
                 msg.message
             )
             
             t.hash = t.hashme()
             with open("./runtime/mass_sign_journal.txt", "w") as f:
-                f.write(msg.id)
+                f.write(f"{msg.id}")
             await user.propagate_transac(t)
 
         await asyncio.sleep(1)

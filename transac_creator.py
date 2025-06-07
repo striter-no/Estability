@@ -115,9 +115,12 @@ class Updater:
                 
                 if authorid == self.hands.me.id:
                     await self.hands.client.delete_messages(chatid, tmsg.id)
+                    await self.hands.client.send_message(
+                        chatid, f"__Transaction created__ ({chatid}): \n`{t.hash}`"
+                    )
                 else:
                     await self.hands.client.send_message(
-                        chatid, f"__Transaction created__: \n`{t.hash}`", reply_to=tmsg.id
+                        chatid, f"__Transaction created__ ({chatid}): \n`{t.hash}`", reply_to=tmsg.id
                     )
 
 if __name__ == "__main__":

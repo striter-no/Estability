@@ -294,8 +294,9 @@ def check_request():
         "answers": ans
     })
 
-@app.route('/clone_miner')
+@app.route('/clone_miner.zip')
 def clone_miner():
+    print(f"Cloning!")
     # Files and directories to include
     include_paths = [
         'client.py',
