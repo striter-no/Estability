@@ -289,7 +289,7 @@ class User:
                                         answers = await req_check.json()
                                         answers = answers["answers"]
                                         print(f"[>] answers getted: {str(answers).replace('\\n', ' ')[:50]}")
-                                        return
+                                        break
                                     elif not msg.startswith("warning"):
                                         print(f"[!] couldn't full sync bc and check answers:\n\t{msg}")
                                         raise RuntimeError(f"Couldn't full sync bc and check answers: {msg}")
@@ -308,6 +308,7 @@ class User:
                                 print(f"[+] new blockchain [{reason}]: {len(self.node.blockchain)} blocks:\n\t{'\n\t'.join([b.hash for b in self.node.blockchain[::-1][:5]])}")
                             else:
                                 print(f"[!] no answers are getted. please retry your request")
+                            return
                         else:
                             print(f"[!] couldn't full sync bc:\n\t{msg}")
                             raise RuntimeError(f"Couldn't full sync bc: {msg}")
