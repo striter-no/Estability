@@ -160,31 +160,49 @@ class User:
                                     status, msg = await self.check_answer(req_check)
 
                                     if status:
-                                        if not nolog: print(f"[>] new blocks are getted")
                                         data = await req_check.json()
+                                        if not nolog: print(f"[>] new blocks are got ({len(data["answers"])})")
                                         answers = [e_block.Block.cook(b) for b in data["answers"]]
                                         # Check for duplicates
+                                        all_cached = True
                                         for b in answers:
-                                            if b.hash in self.new_block_hashes:
+                                            # print(f"... [*] looking at <{b.hash}>")
+                                            if b.hash in self.new_block_hashes or b.hashme() in [oldb.hash for oldb in self.node.blockchain]:
                                                 continue
                                             
+                                            all_cached = False
+
                                             self.new_block_hashes.append(b.hash)
                                             
+                                            print(f"--> [*] checking <{b.hash}>")
+
                                             s, msg = await b.checkme(self.node, self.node.blockchain[-1], self.text_transac_check)
                                             if not s:
                                                 if not (b.hash in [oldb.hash for oldb in self.node.blockchain]):
                                                     print(f"[!] block <{b.hash}> is uncomfired: {msg}")
+                                                # else:
+                                                #     print(f"[!] block was in blockchain but failed: {msg}")
                                                 continue # Skip malicious ones
                                             if b.hash in [oldb.hash for oldb in self.node.blockchain]:
                                                 continue
 
-                                            # Aim especially for new ones (5s diffrence)
-                                            if abs(time.time() - b.timestamp) <= 5:
+                                            # Aim especially for new ones (15s difference)
+                                            # If it only check, than increase difference
+                                            if (only_check and (abs(time.time() - b.timestamp) <= 30)) or \
+                                               (abs(time.time() - b.timestamp) <= 15):
                                                 if not only_check: self.node.blockchain.append(b)
                                                 if not nolog: print(f"[!] getted new block: <{b.hash}>")
                                                 return b
+                                            elif abs(time.time() - b.timestamp) > 15:
+                                                print(f"[!!] block <{b.hash}> is too old ({abs(time.time() - b.timestamp)} delta)")
                                         # Done
-                                        if not nolog: print(f"[!] no new blocks are correct" if len(answers) != 0 else "[!] no new blocks was obtained (no answers)" )
+                                        if not nolog: 
+                                            if not all_cached and len(answers) != 0:
+                                                print(f"[!] no new blocks are correct")
+                                            if len(answers) == 0:
+                                                print("[!] no new blocks was obtained (no answers)")
+                                            if len(answers) != 0 and all_cached:
+                                                print(f"[!] all new blocks are cached")
                                         return None
                                     elif i >= 20: # 2 seconds are gone
                                         if not nolog: print(f"[!] response time out")

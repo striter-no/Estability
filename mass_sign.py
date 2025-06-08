@@ -21,8 +21,11 @@ async def main():
     target_chat_id = input(f"Enter chat to mass-sign > ").strip() or "-1001236072132"
     target_chat = await client.get_entity(int(target_chat_id) if (target_chat_id.isdigit() or (target_chat_id[0] == '-' and target_chat_id[1:].isdigit())) else target_chat_id)
 
-    with open("./runtime/mass_sign_journal.txt") as f:
-        ofst = int(f.read())
+    try:
+        with open("./runtime/mass_sign_journal.txt") as f:
+            ofst = int(f.read())
+    except:
+        ofst = 0
 
     async for msg in client.iter_messages(target_chat, offset_id=ofst):
         msg: th.types.Message = msg

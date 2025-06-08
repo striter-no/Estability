@@ -61,7 +61,7 @@ class Hands:
                 msg: th.types.Message = await self.client.get_messages(echat, ids=msgid)
                 break
             except Exception as ex:
-                print(f"[!] Message [{msgid}] can not be confimed ({i+1}/3): {ex}")
+                print(f"[!] Message [{msgid}] cannot be confimed ({i+1}/3): {ex}")
                 if i == 2:
                     return False, f"Message [{msgid}] was not found ({ex})"
                 await asyncio.sleep(0.5)

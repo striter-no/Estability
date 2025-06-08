@@ -22,7 +22,7 @@ class NodeVerificator:
             if blockchain.count(chain) / len(blockchain) >= 0.51:
                 return chain, "most_popular"
         
-        # Take the earlier chain
+        # Take the earliest chain
         is_all_len_eq = True
         p_l = len(blockchain[0])
         for chain in blockchain:
