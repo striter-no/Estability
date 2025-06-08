@@ -129,7 +129,7 @@ class User:
                 else:
                     raise
 
-    async def new_block_sync(self, nolog = False) -> e_block.Block | None:
+    async def new_block_sync(self, nolog = False, only_check = False) -> e_block.Block | None:
         if not nolog: print(f"[+] new block syncing...")
         max_retries = 5
         retry_delay = 5
@@ -180,7 +180,7 @@ class User:
 
                                             # Aim especially for new ones (5s diffrence)
                                             if abs(time.time() - b.timestamp) <= 5:
-                                                self.node.blockchain.append(b)
+                                                if not only_check: self.node.blockchain.append(b)
                                                 if not nolog: print(f"[!] getted new block: <{b.hash}>")
                                                 return b
                                         # Done

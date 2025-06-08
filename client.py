@@ -144,15 +144,31 @@ async def work(user: User):
         if not block:
             print(f"[*] new block was firstly calculated after double-check!")
             nb.phash = user.node.blockchain[-1].hash
-            user.node.blockchain.append(nb)
-            await user.propagate_block(nb)
+            # Final, third re-check
 
-            hashes = [t.hash for t in nb.transactions]
-            newt = []
-            for t in user.node.transactions:
-                if not (t.hash in hashes):
-                    newt.append(t)
-            user.node.transactions = newt
+            block = await user.new_block_sync(only_check=True)
+            if block and block.timestamp < nb.timestamp:
+                print(f"[!] after third check new block was calculated earlier")
+                user.node.blockchain.append(block)
+
+                hashes = [t.hash for t in block.transactions]
+                newt = []
+                for t in user.node.transactions:
+                    if not (t.hash in hashes):
+                        newt.append(t)
+                user.node.transactions = newt
+            else:
+                print(f"[**] after third check new block was REALLY calculated earlier")
+                user.node.blockchain.append(nb)
+                await user.propagate_block(nb)
+
+
+                hashes = [t.hash for t in nb.transactions]
+                newt = []
+                for t in user.node.transactions:
+                    if not (t.hash in hashes):
+                        newt.append(t)
+                user.node.transactions = newt
         else:
             print(f"[!] after double-check new block was calculated by another node")
             hashes = [t.hash for t in block.transactions]
