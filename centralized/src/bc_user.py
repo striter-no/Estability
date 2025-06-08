@@ -62,6 +62,8 @@ class User:
         self.const_node = node_ip
         self.token = ""
         self.text_transac_check = None
+        self.new_block_hashes = []
+        self.propagated_block_hashes = []
 
     def set_text_transaction_check(self, checker: Callable):
         self.text_transac_check = checker
@@ -144,6 +146,9 @@ class User:
                         if status:
                             data = await req.json()
                             rec_uuid = data["uuid"]
+                            # if rec_uuid in self.propagated_block_hashes:
+                            #     if not nolog: print(f"[<>] skiping self-propagated block")
+                            #     return
                             i = 0
                             if not nolog: print(f"[*] update request successeded, getting answer")
 
@@ -157,10 +162,18 @@ class User:
                                     if status:
                                         if not nolog: print(f"[>] new blocks are getted")
                                         data = await req_check.json()
-                                        answers = [e_block.Block.cook(tr) for tr in data["answers"]]
+                                        answers = [e_block.Block.cook(b) for b in data["answers"]]
                                         # Check for duplicates
                                         for b in answers:
-                                            if not (await b.checkme(self.node, self.node.blockchain[-1], self.text_transac_check))[0]:
+                                            if b.hash in self.new_block_hashes:
+                                                continue
+                                            
+                                            self.new_block_hashes.append(b.hash)
+                                            
+                                            s, msg = await b.checkme(self.node, self.node.blockchain[-1], self.text_transac_check)
+                                            if not s:
+                                                if not (b.hash in [oldb.hash for oldb in self.node.blockchain]):
+                                                    print(f"[!] block <{b.hash}> is uncomfired: {msg}")
                                                 continue # Skip malicious ones
                                             if b.hash in [oldb.hash for oldb in self.node.blockchain]:
                                                 continue
@@ -171,7 +184,7 @@ class User:
                                                 if not nolog: print(f"[!] getted new block: <{b.hash}>")
                                                 return b
                                         # Done
-                                        if not nolog: print(f"[!] no new blocks are correct")
+                                        if not nolog: print(f"[!] no new blocks are correct" if len(answers) != 0 else "[!] no new blocks was obtained (no answers)" )
                                         return None
                                     elif i >= 20: # 2 seconds are gone
                                         if not nolog: print(f"[!] response time out")
@@ -308,6 +321,8 @@ class User:
                                 print(f"[+] new blockchain [{reason}]: {len(self.node.blockchain)} blocks:\n\t{'\n\t'.join([b.hash for b in self.node.blockchain[::-1][:5]])}")
                             else:
                                 print(f"[!] no answers are getted. please retry your request")
+                                if len(self.node.blockchain) != 0:
+                                    print(f"[!] local version of the blockchain kept ({len(self.node.blockchain)} blocks)")
                             return
                         else:
                             print(f"[!] couldn't full sync bc:\n\t{msg}")
@@ -321,22 +336,19 @@ class User:
 
     async def propagate_block(self, block: e_block.Block):
         print(f"[+] starting block propagation")
+        print(block.stringify())
+        print()
         max_retries = 5
         retry_delay = 5
         for attempt in range(max_retries):
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(f"{self.const_node}/prp_block", json={
-                        "token": self.token,
-                        "timestamp": block.timestamp,
-                        "nonce": block.nonce,
-                        "phash": block.phash,
-                        "bits": block.bits,
-                        "hash": block.hash,
-                        "transactions": [t.rawme() for t in block.transactions]
-                    }) as req:
+                    data = {"token": self.token} | block.rawme()
+
+                    async with session.get(f"{self.const_node}/prp_block", json=data) as req:
                         status, msg = await self.check_answer(req)
                         if status:
+                            # self.propagated_block_hashes.append(block.hash)
                             print(f"[>] successfully propagated new block")
                             return
                         else:
@@ -351,10 +363,7 @@ class User:
 
     async def propagate_transac(self, transac: e_tran.Transaction):
         print(f"[+] starting transaction propagation")
-        data = {"token": self.token}
-
-        for (k, v) in transac.rawme().items():
-            data[k] = v
+        data = {"token": self.token} | transac.rawme()
         max_retries = 5
         retry_delay = 5
         for attempt in range(max_retries):

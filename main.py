@@ -94,7 +94,7 @@ async def prp_block():
     new_blocks = normal.copy()
     new_blocks.append((e_block.Block.cook(data), token))
 
-    return jsonify({ "status": "ok", "message": "block started to propagate" })
+    return jsonify({ "status": "ok", "message": "block started to propagate"})
 
 # /prp_transaction route
 # need: propagates new transaction to other network users

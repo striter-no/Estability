@@ -1,10 +1,15 @@
+from collections import Counter
 from typing import Callable
 import src.estab.transaction as tr
 import time, hashlib, random, decimal
 
-START_EMISSION = 100
-BITS_BLOCKS_CHANGE = 20_000
-HALVING_BLOCKS = 540_000
+def most_frequent(list_):
+    counter = Counter(list_)
+    return counter.most_common(1)[0][0]
+
+START_EMISSION = 40
+BITS_BLOCKS_CHANGE = 2500
+HALVING_BLOCKS = 210_000
 TARGET_SECONDS = 120
 TRANSACTIONS_IN_BLOCK = 5
 
@@ -27,11 +32,13 @@ class Block:
         self.hash = ""
         
         self.transactions: list[tr.Transaction] = transactions
-    
+
+    def get_local_emission(self, blockchain: list) -> float:
+        return START_EMISSION / max(1, 2 * max(1, len(blockchain) // HALVING_BLOCKS) if len(blockchain) >= HALVING_BLOCKS else 1)
 
     def make_emission(self, blockchain: list, address: str, pri_key, pub_key):
         # Halving
-        local_emm = START_EMISSION / max(1, 2 * max(1, len(blockchain) // HALVING_BLOCKS))
+        local_emm = self.get_local_emission(blockchain)
         
         t = tr.Transaction(
             tr.TRANSACTION_TYPE.emission,
@@ -62,7 +69,7 @@ class Block:
         return hashes[0]
 
     def stringify(self):
-        return f"block: {self.hash}\nphash: {self.phash}\ntime: {self.timestamp}\nnonce: {self.nonce}\nbits: {self.bits}\ntransactions:\n\t{'\n\t'.join([
+        return f"block: {self.hash}\nphash: {self.phash}\ntime: {self.timestamp}\nnonce: {self.nonce}\nmerkle: {self.merkle}\nbits: {self.bits}\ntransactions:\n\t{'\n\t'.join([
             tr.stringify() for tr in self.transactions
         ])}"
 
@@ -128,13 +135,14 @@ class Block:
             "phash": self.phash,
             "bits": self.bits,
             "hash": self.hash,
+            "merkle": self.merkle,
             "transactions": [t.rawme() for t in self.transactions]
         }
     
     def calcbits(self, blockchain: list) -> str:
         if len(blockchain) % BITS_BLOCKS_CHANGE == 0 and len(blockchain) != 0:
             minedelta = (time.time() - blockchain[len(blockchain) - BITS_BLOCKS_CHANGE]) / BITS_BLOCKS_CHANGE
-            return hex(round(decimal.Decimal(int(self.bits, 16)) * decimal.Decimal(TARGET_SECONDS / minedelta)))[2:]
+            return hex(round(decimal.Decimal(int(self.bits, 16)) * max(decimal.Decimal(0.25), min(4, decimal.Decimal(TARGET_SECONDS / minedelta)))))[2:]
         return self.bits
     
     async def checkme(self, node, prev_block = None, text_check: Callable | None = None) -> tuple[bool, str]:
@@ -142,9 +150,16 @@ class Block:
         Returns: (is_valid, error_message)
         """
 
+        # 0. Проверить сложность на адекватность
+        this_period_blocks = node.blockchain[(BITS_BLOCKS_CHANGE * (len(node.blockchain) // BITS_BLOCKS_CHANGE)):]
+        most_freq = most_frequent([b.bits for b in this_period_blocks])
+
+        if self.bits < most_freq:
+            return False, f"Invalid block bits (less than most_freq:{most_freq} > {self.bits})"
+
         # 1. Проверка корректности собственного хеша
         if self.hash != self.hashme():
-            return False, "Invalid block hash"
+            return False, f"Invalid block hash ({self.hash} != {self.hashme()})\n: {self.stringify()}\nHASH: {self.hashme()}\n\n"
 
         # 2. Проверка соответствия хешу сложности
         target = int(self.bits, 16)
@@ -161,8 +176,9 @@ class Block:
                 return False, "Previous block not found"
 
         # 4. Проверка временной метки
-        if not self._validate_timestamp(prev_block):
-            return False, "Invalid timestamp"
+        s = self._validate_timestamp(prev_block)
+        if s != 4:
+            return False, f"Invalid timestamp: code ({s})"
 
         # 5. Проверка формата bits
         if not self._validate_bits_format():
@@ -173,8 +189,9 @@ class Block:
 
         emission_n = 0
         for t in self.transactions:
-            if not t.checkme():
-                return False, "Invalid transaction"
+            s, msg = await t.checkme(len(node.blockchain), text_check)
+            if not s:
+                return False, f"Invalid transaction: {msg}"
             if t.ttype == tr.TRANSACTION_TYPE.emission:
                 emission_n += 1
         
@@ -185,11 +202,10 @@ class Block:
             return False, "Empty transactions block"
 
         for t in self.transactions:
-            s, msg = await t.checkme()
-            if not s:
-                return False, f"Invalid transaction: {msg}"
-            if node.check_balance(t.input) < t.amount: 
+            if t.ttype == tr.TRANSACTION_TYPE.coin and node.check_balance(t.input) < t.amount: 
                 return False, f"Invalid transaction: overspending ({t.input}/{t.amount})"
+            if t.ttype == tr.TRANSACTION_TYPE.emission and t.amount > self.get_local_emission(node.blockchain): 
+                return False, f"Invalid transaction: emission overspending ({t.input}/{t.amount})"
 
         return True, "Valid block"
 
@@ -201,19 +217,22 @@ class Block:
         # Проверяем только последний блок (для последовательной валидации)
         return blockchain[-1].hash == self.phash
 
-    def _validate_timestamp(self, prev_block = None) -> bool:
+    def _validate_timestamp(self, prev_block = None) -> int:
         """Проверка временной метки"""
         current_time = time.time()
 
         # Блок не может быть из будущего (с небольшим допуском)
         if self.timestamp > current_time + 7200:  # 2 часа допуск
-            return False
+            return 1
 
         # Блок должен быть после предыдущего
-        if prev_block and self.timestamp <= prev_block.timestamp:
-            return False
+        if prev_block and self.timestamp < prev_block.timestamp:
+            return 2
+        
+        if prev_block and self.timestamp == prev_block.timestamp:
+            return 3
 
-        return True
+        return 4
 
     def _validate_bits_format(self) -> bool:
         """Проверка формата bits"""
@@ -233,6 +252,7 @@ class Block:
         block.phash = rawdata["phash"]
         block.bits = rawdata["bits"]
         block.hash = rawdata["hash"]
+        block.merkle = rawdata["merkle"]
         block.transactions = [tr.Transaction.cook(rt) for rt in rawdata["transactions"]]
         
         return block

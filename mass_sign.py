@@ -18,7 +18,7 @@ async def main():
     await client.connect()
 
     user: api.User = api.User('./runtime/pems/quitearno.pem', "http://192.168.31.100:9001")
-    target_chat_id = input(f"Enter chat to mass-sign > ").strip()
+    target_chat_id = input(f"Enter chat to mass-sign > ").strip() or "-1001236072132"
     target_chat = await client.get_entity(int(target_chat_id) if (target_chat_id.isdigit() or (target_chat_id[0] == '-' and target_chat_id[1:].isdigit())) else target_chat_id)
 
     with open("./runtime/mass_sign_journal.txt") as f:

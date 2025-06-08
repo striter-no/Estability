@@ -49,24 +49,28 @@ class Hands:
         try:
             eauthor = await self.client.get_input_entity(author)
         except Exception as ex:
-            print(ex)
-            return False, f"Author [{author}] was not found"
+            return False, f"Author [{author}] was not found ({ex})"
         # 2. Check chat existence
         try:
             echat = await self.client.get_input_entity(chatid)
-        except:
-            return False, f"Chat [{chatid}] was not found"
+        except Exception as ex:
+            return False, f"Chat [{chatid}] was not found ({ex})"
         # 3. Check message existence
+        for i in range(3):
+            try:
+                msg: th.types.Message = await self.client.get_messages(echat, ids=msgid)
+                break
+            except Exception as ex:
+                if i == 2:
+                    return False, f"Message [{msgid}] was not found ({ex})"
+                await asyncio.sleep(0.5)
+                    
+        # 4. Check message timestamp (+- 15m)
         try:
-            msg: th.types.Message = await self.client.get_messages(echat, ids=msgid)
-        except:
-            return False, f"Message [{msgid}] was not found"
-        # 4. Check message timestamp (+- 1h)
-        try:
-            if abs(msg.date.timestamp() - timestamp) > 60 * 60:
+            if abs(msg.date.timestamp() - timestamp) > (60 * 15):
                 return False, f"Message [{msgid}] is too old ({abs(msg.date.timestamp() - timestamp)})"
-        except:
-            return False, f"Message's [{msgid}] timestamp is undefined"
+        except Exception as ex:
+            return False, f"Message's [{msgid}] timestamp is undefined ({ex})"
         # 5. Check message text
         if len(msg.message) == 0:
             return False, f"Message [{msgid}] has no text"

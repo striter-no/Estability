@@ -201,13 +201,14 @@ def load_blockchain(path: str, user: User):
     
     print(f"[+] restored {len(keys)} blocks")
 
+
 if __name__ == "__main__":
     # user = User(f"./runtime/pems/user_{str(round(time.time()*100))[::-1][:5]}.pem", "http://127.0.0.1:5000")
     
 
-    pemfile = input("Enter path to pem file [quitearno] by default: ") or "quitearno"
-    bc_db = input("Enter path to database file [quitearno_bc] by default: ") or "quitearno_bc"
-    verif = input("Enter path to TG session (verificator) [text_verificator] by default: ") or "text_verificator"
+    pemfile = input("Enter path to pem file [quitearno_2] by default: ") or "quitearno2"
+    bc_db = input("Enter path to database file [quitearno_bc_2] by default: ") or "quitearno_bc_2"
+    verif = input("Enter path to TG session (verificator) [text_verificator_2] by default: ") or "text_verificator_2"
 
     pemfile = f"./runtime/pems/{pemfile}.pem"
     bc_db = f"./runtime/blockchains/{bc_db}.sqlite3"
