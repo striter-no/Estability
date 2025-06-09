@@ -9,6 +9,8 @@ import src.estab.transaction as e_tran
 import src.estab.verificator as e_ver
 import src.estab.user as e_user
 
+TIME_DIFF = 30
+
 class Request:
     def __init__(self, type: str, entity: str, body: str, vuuid: str, timestamp: float):
         self.type = type
@@ -65,6 +67,7 @@ class User:
         self.new_block_hashes = []
         self.propagated_block_hashes = []
         self.nodes_num = 0
+        self.mined_blocks = 0
 
     async def upd_nodes_num(self, nolog=False):
         self.nodes_num = await self.num_of_nodes(nolog=nolog)
@@ -118,7 +121,7 @@ class User:
 
                         if status:
                             data = await req.json()
-                            if not nolog: print(f"[>] request getted:\n\t{data['type']}-{data['entity']}-{data['uuid']}-{data['timestamp']}-{str(data['body']).replace('\\n', ' ')[:50]}")
+                            if not nolog: print(f"[>] request got:\n\t{data['type']}-{data['entity']}-{data['uuid']}-{data['timestamp']}-{str(data['body']).replace('\\n', ' ')[:50]}")
                             return Request(data["type"], data["entity"], data["body"], data["uuid"], data["timestamp"])
                         elif not msg.startswith("warning"):
                             print(f"[!] couldnt get pending requests")
@@ -133,7 +136,7 @@ class User:
                 else:
                     raise
 
-    async def new_block_sync(self, nolog = False, only_check = False, multiple = False) -> e_block.Block | list[e_block.Block] | None:
+    async def new_block_sync(self, nolog = False, only_check = False, multiple = False, non_agressive = False) -> tuple[e_block.Block, bool] | list[tuple[e_block.Block, bool]] | None:
         if not nolog: print(f"[+] new block syncing...")
         max_retries = 5
         retry_delay = 5
@@ -145,7 +148,7 @@ class User:
                         "target": "newblock"
                     }) as req:
                         status, msg = await self.check_answer(req)
-
+                        
                         answers: list[e_block.Block] = []
                         if status:
                             data = await req.json()
@@ -180,7 +183,12 @@ class User:
                                             
                                             print(f"--> [*] checking <{b.hash}>")
 
-                                            s, msg = await b.checkme(self.node, self.node.blockchain[-1], self.text_transac_check)
+                                            s, msg = await b.checkme(self.node, self.node.blockchain[-1], self.text_transac_check, phash_agrs_check=non_agressive, pre_prev_block= self.node.blockchain[-2] if non_agressive else None)
+                                            non_agressive_ok = msg == "non_agressive_ok"
+
+                                            if non_agressive_ok:
+                                                print(f"[!] NON-AGRESSIVE block: {b.hash}")
+
                                             if not s:
                                                 if not (b.hash in [oldb.hash for oldb in self.node.blockchain]):
                                                     print(f"[!] block <{b.hash}> is uncomfired: {msg}")
@@ -191,15 +199,16 @@ class User:
                                                 print(f"[!] block <{b.hash}> was in blockchain")
                                                 continue
 
-                                            # Aim especially for new ones (15s difference)
+                                            # Aim especially for new ones (TIME_DIFF s difference)
                                             # If it only check, than increase difference
-                                            if (only_check and (abs(time.time() - b.timestamp) <= 30)) or \
-                                               (abs(time.time() - b.timestamp) <= 15):
+                                            
+                                            if (abs(time.time() - b.timestamp) <= TIME_DIFF):
                                                 if not only_check: self.node.blockchain.append(b)
-                                                if not nolog: print(f"[!] getted new block: <{b.hash}>")
-                                                if not multiple: return b
-                                                else: multiple_blocks.append(b)
-                                            elif abs(time.time() - b.timestamp) > 15:
+                                                # if not nolog: 
+                                                print(f"[!] got new block: <{b.hash}>")
+                                                if not multiple: return b, non_agressive_ok
+                                                else: multiple_blocks.append((b, non_agressive_ok))
+                                            elif abs(time.time() - b.timestamp) > TIME_DIFF:
                                                 print(f"[!!] block <{b.hash}> is too old ({abs(time.time() - b.timestamp)} delta)")
                                         # Done
                                         if multiple:
@@ -251,7 +260,7 @@ class User:
                             data = await req.json()
                             rec_uuid = data["uuid"]
                             i = 0
-                            if not nolog: print(f"[+] getted uuid for newtransac request: <{rec_uuid}>")
+                            if not nolog: print(f"[+] got uuid for newtransac request: <{rec_uuid}>")
 
                             while True:
                                 async with session.get(f"{self.const_node}/check", json={
@@ -297,7 +306,7 @@ class User:
                 else:
                     raise
 
-    async def full_bc_sync(self):
+    async def full_bc_sync(self, self_verif = True):
         print(f"[+] starting full BC sync")
         max_retries = 5
         retry_delay = 5
@@ -328,26 +337,29 @@ class User:
                                     if status:
                                         answers = await req_check.json()
                                         answers = answers["answers"]
-                                        print(f"[>] answers getted: {str(answers).replace('\\n', ' ')[:50]}")
+                                        print(f"[>] answers got: {str(answers).replace('\\n', ' ')[:50]}")
                                         break
                                     elif not msg.startswith("warning"):
                                         print(f"[!] couldn't full sync bc and check answers:\n\t{msg}")
                                         raise RuntimeError(f"Couldn't full sync bc and check answers: {msg}")
                                     elif i > 20: # 2 seconds are gone
-                                        print(f"[!] no response is getted. response timeout")
+                                        print(f"[!] no response is got. response timeout")
                                         return
 
                                     await asyncio.sleep(0.1)
                                     i += 1
-                            if len(answers) != 0: 
+                            if self_verif and len(answers) != 0: 
                                 raw_blockchain, reason = e_ver.NodeVerificator.fsync_verifacation(answers)
                                 self.node.blockchain = [
                                     e_block.Block.cook(raw) for raw in raw_blockchain
                                 ]
 
                                 print(f"[+] new blockchain [{reason}]: {len(self.node.blockchain)} blocks:\n\t{'\n\t'.join([b.hash for b in self.node.blockchain[::-1][:5]])}")
+                            elif not self_verif and len(answers) != 0:
+                                print(f"[+] self_verification disabled")
+                                return answers
                             else:
-                                print(f"[!] no answers are getted. please retry your request")
+                                print(f"[!] no answers are got. please retry your request")
                                 if len(self.node.blockchain) != 0:
                                     print(f"[!] local version of the blockchain kept ({len(self.node.blockchain)} blocks)")
                             return
@@ -424,7 +436,7 @@ class User:
                         
                         if status:
                             data = await req.json()
-                            print(f"[>] new token is getted: <{data['token']}>")
+                            print(f"[>] new token is got: <{data['token']}>")
                             self.token = data["token"]
                             return
                         else:
@@ -450,7 +462,7 @@ class User:
                         
                         if status:
                             data = await req.json()
-                            if not nolog: print(f"[>] nodesnum is getted: <{data['num']}>")
+                            if not nolog: print(f"[>] nodesnum is got: <{data['num']}>")
                             return data['num']
                         else:
                             print(f"[!] couldn't get a num of nodes: {msg}")

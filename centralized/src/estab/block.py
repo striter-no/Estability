@@ -148,7 +148,7 @@ class Block:
             return hex(round(decimal.Decimal(int(self.bits, 16)) * max(decimal.Decimal(0.25), min(4, decimal.Decimal(TARGET_SECONDS / minedelta)))))[2:]
         return self.bits
     
-    async def checkme(self, node, prev_block = None, text_check: Callable | None = None) -> tuple[bool, str]:
+    async def checkme(self, node, prev_block = None, text_check: Callable | None = None, phash_agrs_check = False, pre_prev_block = None) -> tuple[bool, str]:
         """
         Returns: (is_valid, error_message)
         """
@@ -175,9 +175,16 @@ class Block:
             return False, f"Hash doesn't meet difficulty target ({self.hash} >= {self.bits})"
 
         # 3. Эффективная проверка предыдущего блока
+        non_agressive_ok = False
         if prev_block:
-            if self.phash != prev_block.hash and len(node.blockchain) != 0:
+            if self.phash != prev_block.hash and len(node.blockchain) != 0 and not phash_agrs_check:
                 return False, f"Previous hash mismatch ({self.phash} != {prev_block.hash})"
+            elif self.phash != prev_block.hash and phash_agrs_check and len(node.blockchain) != 0 and pre_prev_block:
+                # Non-agressive previous check
+                if self.phash != pre_prev_block.hash:
+                    return False, f"Non-agressive phash failed ({self.phash} != {pre_prev_block.hash})"
+                else:
+                    non_agressive_ok = True
         else:
             # Fallback к поиску в блокчейне (только если prev_block не передан)
             if not self._validate_previous_hash(node.blockchain):
@@ -217,7 +224,7 @@ class Block:
 
         print(f"[>>] block {self.hash} is a valid block")
 
-        return True, "Valid block"
+        return True, "non_agressive_ok" if non_agressive_ok else "Valid block"
 
     def _validate_previous_hash(self, blockchain: list) -> bool:
         """Эффективная проверка предыдущего хеша"""

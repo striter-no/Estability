@@ -1,11 +1,13 @@
-from src.bc_user import User, BlockchainNode
+from src.bc_user import User, TIME_DIFF
 from src.text_verificator import Hands
 
+from colorama import Fore, Back
 import asyncio
 import time, json
 
 import src.estab.block as e_block
 import src.estab.transaction as e_tran
+import src.estab.verificator as e_ver
 import src.database as db
 
 # function: mine_new_block
@@ -53,8 +55,9 @@ async def mine_new_block(user: User, stop_event: asyncio.Event) -> e_block.Block
 #          otherwise continues to wait
 async def check_new_blocks(user: User, stop_event: asyncio.Event):
     while not stop_event.is_set():
-        block = await user.new_block_sync(nolog=True)
-        if block:
+        res = await user.new_block_sync(nolog=True)
+        if res:
+            block, _ = res
             print(f"[%] confirmed new block: {block.hash}")
             stop_event.set()
             return True
@@ -63,7 +66,7 @@ async def check_new_blocks(user: User, stop_event: asyncio.Event):
 async def sync_new_transactions(user: User, stop_event: asyncio.Event):
     while not stop_event.is_set():
         await user.new_transac_sync(nolog=True)
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
 
 async def update_nodes_count(user: User, stop_event: asyncio.Event):
     while not stop_event.is_set():
@@ -79,7 +82,7 @@ async def answer_pending_reqs(user: User, stop_event: asyncio.Event):
                 cache_hashes.append(preq.uuid)
                 await user.send_answer(
                     preq.uuid, [cooked.rawme() for cooked in user.node.blockchain]
-                )
+                ) 
             # Syncing new blocks and transactions
             # is server-side
         await asyncio.sleep(2)
@@ -96,12 +99,11 @@ async def answer_pending_reqs(user: User, stop_event: asyncio.Event):
 async def work(user: User):
     print(f"[!] work is started")
     last_delta = (time.time() - user.node.blockchain[-1].timestamp) if len(user.node.blockchain) > 0 else 0
-    if len(user.node.blockchain) == 0 or (last_delta > 60):
-        if (last_delta > 60):
+    if len(user.node.blockchain) == 0 or (last_delta > (TIME_DIFF + 1)):
+        if (last_delta > (TIME_DIFF + 1)):
             print(f"[!] local blockchain is old ({(last_delta)}s)")
         print(f"[+] starting full blockchain synchronization")
         await user.full_bc_sync()
-        
     
     print(f"[+] new block synchronization")
     await user.new_block_sync()
@@ -137,66 +139,95 @@ async def work(user: User):
                     newt.append(t)
             user.node.transactions = newt
 
-            print(f"[!] new block was calculated by another node")
+            print(f"{Fore.YELLOW}[!] new block was calculated by another node{Fore.RESET}")
         if task is mine_task:
             nb = task.result()
-            print(f"[*] new block was calculated firstly")
+            print(f"{Fore.CYAN}[*] new block was calculated firstly{Fore.RESET}")
 
-    # if nb and isinstance(nb, e_block.Block):
-    print(f"[+] new bits were calculated\n\t[{user.node.blockchain[-1].bits} -> {nb.bits}]")
-    print(nb.stringify())
-
-    #    # block: e_block.Block | None = await user.new_block_sync()
-    #    # if not block:
-    # print(f"[*] new block was firstly calculated after double-check!")
-    nb.phash = user.node.blockchain[-1].hash
-    # Final, third re-check
-
-    await user.propagate_block(nb)
-
-    print(f"[%] final third check")
     
-    start = time.time()
-    while True:
-        blocks: list[e_block.Block] = await user.new_block_sync(only_check=True, multiple=True, nolog=False)
-        if (len(blocks) / user.nodes_num >= 0.51) or (time.time() - start > 3):
-            break
-        await asyncio.sleep(0.5)
-    
-    if len(blocks) == 0:
-        print(f"[!] no blocks from other miners")
-        user.node.blockchain.append(nb)
+    if nb and isinstance(nb, e_block.Block):
+        print(f"[+] new bits were calculated\n\t[{user.node.blockchain[-1].bits} -> {nb.bits}]")
+        print(nb.stringify())
 
-        hashes = [t.hash for t in nb.transactions]
-        newt = []
-        for t in user.node.transactions:
-            if not (t.hash in hashes):
-                newt.append(t)
-        user.node.transactions = newt
-    else:
-        print(f"[^] new blocks!: {len(blocks) + 1}")
-        timestamped = {b.timestamp: b for b in blocks} | {nb.timestamp : nb}
-        earliest = sorted(timestamped)[0]
-        print(f"[&] new block: {earliest}")
-        block = timestamped[earliest]
-        print(f"[{"new block was calculated firstly" if block is nb else "new block was calculated by other miner"}]")
-        user.node.blockchain.append(block)
+        nb.phash = user.node.blockchain[-1].hash
+        # Final, third re-check
 
-        hashes = [t.hash for t in block.transactions]
-        newt = []
-        for t in user.node.transactions:
-            if not (t.hash in hashes):
-                newt.append(t)
-        user.node.transactions = newt
-        # else:
-        #     print(f"[!] after double-check new block was calculated by another node")
-        #     hashes = [t.hash for t in block.transactions]
-        #     newt = []
-        #     for t in user.node.transactions:
-        #         if not (t.hash in hashes):
-        #             newt.append(t)
-        #     user.node.transactions = newt
+        await user.propagate_block(nb)
+
+        print(f"[%] new block synchronization check")
+        
+        start = time.time()
+        blocks: list[tuple[e_block.Block, bool]] = []
+        while True:
+            blocks += await user.new_block_sync(only_check=True, multiple=True, nolog=True, non_agressive=True)
+            if (len(blocks) / user.nodes_num >= 0.51) or (time.time() - start > 5): # +1 for self block is not needed
+                break
+            await asyncio.sleep(0.5)
+        
+        if len(blocks) == 0:
+            print(f"{Fore.MAGENTA}[!] no blocks from other miners{Fore.RESET}")
+            user.mined_blocks += 1
+            user.node.blockchain.append(nb)
+
+            hashes = [t.hash for t in nb.transactions]
+            newt = []
+            for t in user.node.transactions:
+                if not (t.hash in hashes):
+                    newt.append(t)
+            user.node.transactions = newt
+        else:
+            print(f"[^] new blocks!: {len(blocks)}")
+            
+            for b, nonagr in blocks:
+                print(f"   [{"nonagressive!" if nonagr else "classic"}] block: ({b.timestamp}) {b.hash}")
+
+            timestamped = {b.timestamp: (b, nonagr) for b, nonagr in blocks} | {nb.timestamp : (nb, False)}
+            earliest = sorted(timestamped)[0]
+            print(f"[&] new block: {earliest}/{nb.timestamp} ({Back.BLUE}DELTA: {nb.timestamp - earliest}{Back.RESET})")
+            block, nonagr = timestamped[earliest]
+            print(f"[{"nonagressive!" if nonagr else "classic"}][{f"{Fore.GREEN}new block was calculated firstly{Fore.RESET}" if block.hash == nb.hash else f"{Fore.RED}new block was calculated by other miner{Fore.RESET}"}]")
+            
+            if block.hash == nb.hash:
+                user.mined_blocks += 1
+
+            if nonagr:
+                for t in user.node.blockchain[-1].transactions:
+                    user.node.transactions.append(
+                        t
+                    ) # Re-add transactions
+
+                del user.node.blockchain[-1]
+            user.node.blockchain.append(block)
+
+            hashes = [t.hash for t in block.transactions]
+            newt = []
+            for t in user.node.transactions:
+                if not (t.hash in hashes):
+                    newt.append(t)
+            user.node.transactions = newt
     
+    # if user.mined_blocks >= 6:
+    #     user.mined_blocks = 0
+
+    #     print(f"{Back.YELLOW}[+] already mined 6 or more blocks{Back.RESET}")
+    #     print(f"[*] checking leading blockchain thread")
+    #     answers = await user.full_bc_sync(self_verif=False)
+    #     if answers:
+    #         raw_blockchain, reason = e_ver.NodeVerificator.fsync_verifacation(answers)
+            
+    #         # If user's thread is not most popular or the longest chain - synchronize blockchain 
+    #         if (reason in ["most_popular", "longest chain"]) and (e_block.Block.cook(raw_blockchain[-1]).hash != user.node.blockchain[-1].hash):
+    #             print(f"[!] current thread is not the most popular one, re-syncing")
+    #             print(f"[!] last hashes does not match: {e_block.Block.cook(raw_blockchain[-1]).hash} != {user.node.blockchain[-1].hash}")
+    #             user.node.blockchain = [
+    #                 e_block.Block.cook(raw) for raw in raw_blockchain
+    #             ]
+    #             user.node.transactions = []
+    #         else:
+    #             print(f"[$] current thread is the most popular/the longest one")
+    #     else:
+    #         print(f"[!] no answers were got")
+
     print(f"[+] new blockchain contains: {len(user.node.blockchain)} blocks:\n\t{'\n\t'.join([b.hash for b in user.node.blockchain[::-1][:5]])}")
     print('-'*50)
 
