@@ -107,7 +107,7 @@ class Transaction:
         typesd = {member.name: member.value for member in TRANSACTION_TYPE}
         return hashlib.sha256(f"{typesd[self.ttype.name]}{self.timestamp}{self.input}{self.output}{self.text}{self.amount}".encode()).hexdigest()
 
-    async def checkme(self, block_depth = 0, text_check: Callable | None = None) -> tuple[bool, str]:
+    async def checkme(self, node, block_depth = 0, text_check: Callable | None = None) -> tuple[bool, str]:
         print(f"[!] checking transaction")
         """Validates the transaction integrity"""
         # Recalculate hash and compare
@@ -119,13 +119,15 @@ class Transaction:
         # For signed transactions, verify signature
         if self.ttype in [TRANSACTION_TYPE.coin, TRANSACTION_TYPE.emission]:
             if not self.pub_key or not self.signature:
-                print(f"[>>] no data for signature")
+                print(f"[>>] no data for signature ({', '.join(["pub_key missing" if not self.pub_key else "", "signature missing" if not self.signature else ""])})")
                 return False, "No data for signature"
             if self.amount < 1:
                 print(f"[>>] negative emission: {self.amount} < 1")
                 return False, "Negative emission"
+            if self.ttype == TRANSACTION_TYPE.coin and node.check_balance(self.input) < self.amount: 
+                return False, f"Invalid transaction: overspending ({self.input}/{self.amount})"
 
-            print(f"[!] signature verification: {self.verify_sign(self.pub_key)}")
+            print(f"[$] signature verification: {self.verify_sign(self.pub_key)}")
             return self.verify_sign(self.pub_key), "Signature verification"
 
         if self.ttype == TRANSACTION_TYPE.emission:
@@ -139,10 +141,12 @@ class Transaction:
 
         if self.ttype == TRANSACTION_TYPE.text:
             if not text_check:
+                print(f"[!!!] No transaction check for text type")
                 return True, "No transaction check for text type"
             
             s, reason = await text_check(self)
             if not s:
+                print(f"[!] text verification failed: {reason}")
                 return False, reason
 
         print(f"[!] transaction is ok")

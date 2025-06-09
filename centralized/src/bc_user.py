@@ -64,6 +64,10 @@ class User:
         self.text_transac_check = None
         self.new_block_hashes = []
         self.propagated_block_hashes = []
+        self.nodes_num = 0
+
+    async def upd_nodes_num(self, nolog=False):
+        self.nodes_num = await self.num_of_nodes(nolog=nolog)
 
     def set_text_transaction_check(self, checker: Callable):
         self.text_transac_check = checker
@@ -129,7 +133,7 @@ class User:
                 else:
                     raise
 
-    async def new_block_sync(self, nolog = False) -> e_block.Block | None:
+    async def new_block_sync(self, nolog = False, only_check = False, multiple = False) -> e_block.Block | list[e_block.Block] | None:
         if not nolog: print(f"[+] new block syncing...")
         max_retries = 5
         retry_delay = 5
@@ -158,33 +162,56 @@ class User:
                                     "uuid": rec_uuid
                                 }) as req_check:
                                     status, msg = await self.check_answer(req_check)
-
+                                    multiple_blocks = []
                                     if status:
-                                        if not nolog: print(f"[>] new blocks are getted")
                                         data = await req_check.json()
+                                        if not nolog: print(f"[>] new blocks are got ({len(data["answers"])})")
                                         answers = [e_block.Block.cook(b) for b in data["answers"]]
                                         # Check for duplicates
+                                        all_cached = True
                                         for b in answers:
-                                            if b.hash in self.new_block_hashes:
+                                            # print(f"... [*] looking at <{b.hash}>")
+                                            if b.hash in self.new_block_hashes or b.hashme() in [oldb.hash for oldb in self.node.blockchain]:
                                                 continue
                                             
+                                            all_cached = False
+
                                             self.new_block_hashes.append(b.hash)
                                             
+                                            print(f"--> [*] checking <{b.hash}>")
+
                                             s, msg = await b.checkme(self.node, self.node.blockchain[-1], self.text_transac_check)
                                             if not s:
                                                 if not (b.hash in [oldb.hash for oldb in self.node.blockchain]):
                                                     print(f"[!] block <{b.hash}> is uncomfired: {msg}")
+                                                # else:
+                                                #     print(f"[!] block was in blockchain but failed: {msg}")
                                                 continue # Skip malicious ones
                                             if b.hash in [oldb.hash for oldb in self.node.blockchain]:
+                                                print(f"[!] block <{b.hash}> was in blockchain")
                                                 continue
 
-                                            # Aim especially for new ones (5s diffrence)
-                                            if abs(time.time() - b.timestamp) <= 5:
-                                                self.node.blockchain.append(b)
+                                            # Aim especially for new ones (15s difference)
+                                            # If it only check, than increase difference
+                                            if (only_check and (abs(time.time() - b.timestamp) <= 30)) or \
+                                               (abs(time.time() - b.timestamp) <= 15):
+                                                if not only_check: self.node.blockchain.append(b)
                                                 if not nolog: print(f"[!] getted new block: <{b.hash}>")
-                                                return b
+                                                if not multiple: return b
+                                                else: multiple_blocks.append(b)
+                                            elif abs(time.time() - b.timestamp) > 15:
+                                                print(f"[!!] block <{b.hash}> is too old ({abs(time.time() - b.timestamp)} delta)")
                                         # Done
-                                        if not nolog: print(f"[!] no new blocks are correct" if len(answers) != 0 else "[!] no new blocks was obtained (no answers)" )
+                                        if multiple:
+                                            return multiple_blocks
+
+                                        if not nolog: 
+                                            if not all_cached and len(answers) != 0:
+                                                print(f"[!] no new blocks are correct")
+                                            if len(answers) == 0:
+                                                print("[!] no new blocks was obtained (no answers)")
+                                            if len(answers) != 0 and all_cached:
+                                                print(f"[!] all new blocks are cached")
                                         return None
                                     elif i >= 20: # 2 seconds are gone
                                         if not nolog: print(f"[!] response time out")
@@ -245,7 +272,7 @@ class User:
                                             if self.node.check_transaction(t.hash)[0]:
                                                 continue # Skip duplicates
 
-                                            if not (await t.checkme(len(self.node.blockchain), self.text_transac_check)):
+                                            if not (await t.checkme(self.node, len(self.node.blockchain), self.text_transac_check)):
                                                 continue # Skip malicious ones
 
                                             self.node.transactions.append(t)
@@ -403,6 +430,31 @@ class User:
                         else:
                             print(f"[!] couldn't get a token: {msg}")
                             raise RuntimeError(f"Couldn't get a token: {msg}")
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                print(f"[!] Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                else:
+                    raise
+
+    async def num_of_nodes(self, nolog=False) -> int:
+        if not nolog: print(f"[+] acquiring number of nodes")
+
+        max_retries = 5
+        retry_delay = 5
+        for attempt in range(max_retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{self.const_node}/nodesnum", json={"token": self.token}) as req:
+                        status, msg = await self.check_answer(req)
+                        
+                        if status:
+                            data = await req.json()
+                            if not nolog: print(f"[>] nodesnum is getted: <{data['num']}>")
+                            return data['num']
+                        else:
+                            print(f"[!] couldn't get a num of nodes: {msg}")
+                            raise RuntimeError(f"Couldn't get a num of nodes: {msg}")
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 print(f"[!] Attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:

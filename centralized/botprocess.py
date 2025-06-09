@@ -197,6 +197,7 @@ class Processor:
                 pub_key = cuser.node.user.public_key
             )
             t.hash = t.hashme()
+            t.signature = t.signme(cuser.node.user.private_key)
             await cuser.propagate_transac(t)
 
             await msg.answer(

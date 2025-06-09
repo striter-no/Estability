@@ -197,7 +197,7 @@ class Block:
 
         emission_n = 0
         for t in self.transactions:
-            s, msg = await t.checkme(len(node.blockchain), text_check)
+            s, msg = await t.checkme(node, len(node.blockchain), text_check)
             if not s:
                 return False, f"Invalid transaction: {msg}"
             if t.ttype == tr.TRANSACTION_TYPE.emission:
@@ -212,8 +212,6 @@ class Block:
         print(f"[?!] block {self.hash} seems to be really nice!")
 
         for t in self.transactions:
-            if t.ttype == tr.TRANSACTION_TYPE.coin and node.check_balance(t.input) < t.amount: 
-                return False, f"Invalid transaction: overspending ({t.input}/{t.amount})"
             if t.ttype == tr.TRANSACTION_TYPE.emission and t.amount > self.get_local_emission(node.blockchain): 
                 return False, f"Invalid transaction: emission overspending ({t.input}/{t.amount})"
 

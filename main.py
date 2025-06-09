@@ -29,6 +29,7 @@ import src.estab.block as e_block
 import src.estab.transaction as e_tran
 
 users = db.DataBase("./runtime/databases/users.sqlite3")
+alive_nodes = {}
 app = Flask(__name__)
 
 class Request:
@@ -65,6 +66,25 @@ async def regtoken():
         "token": token
     })
 
+@app.route('/nodesnum')
+async def nodesnum():
+    try: data = request.json
+    except: data = None
+
+    if data is None:
+        return jsonify({
+            "status": "fatal-error",
+            "reason": "no json data is provided. requested: token"
+        })
+
+    token = data.get("token")
+    if token is None: return jsonify({ "status": "fatal-error", "reason": "no token is provided in json data" })
+
+    return jsonify({
+        "status": "ok",
+        "num": len([token for token in alive_nodes if time.time() - alive_nodes[token] < 180])
+    })
+
 # /prp_block route
 # need: propagates new block to other network users
 #
@@ -73,6 +93,7 @@ async def regtoken():
 async def prp_block():
     global requests
     global new_blocks
+    global alive_nodes
 
     try: data = request.json
     except: data = None
@@ -93,6 +114,7 @@ async def prp_block():
     
     new_blocks = normal.copy()
     new_blocks.append((e_block.Block.cook(data), token))
+    alive_nodes[token] = time.time()
 
     return jsonify({ "status": "ok", "message": "block started to propagate"})
 
@@ -103,6 +125,7 @@ async def prp_block():
 @app.route('/prp_transaction')
 async def prp_transaction():
     global requests
+    global alive_nodes
     global new_transactions
 
     try: data = request.json
@@ -124,6 +147,7 @@ async def prp_transaction():
 
     new_transactions = normal.copy()
     new_transactions.append((e_tran.Transaction.cook(data), token))
+    alive_nodes[token] = time.time()
 
     return jsonify({ "status": "ok", "message": "transaction started to propagate" })
 
@@ -134,6 +158,7 @@ async def prp_transaction():
 @app.route("/jupdate")
 async def jupdate():
     global requests
+    global alive_nodes
     try: data = request.json
     except: data = None
 
@@ -169,6 +194,7 @@ async def jupdate():
             "body": r.body
         })
 
+    alive_nodes[token] = time.time()
     return jsonify({"status": "warning", "reason": "no requests are available"})
 
 # /answer route
@@ -178,6 +204,7 @@ async def jupdate():
 @app.route('/answer')
 async def answer():
     global requests
+    global alive_nodes
     try: data = request.json
     except: data = None
 
@@ -196,7 +223,7 @@ async def answer():
     if answer_body is None: return jsonify({ "status": "fatal-error", "reason": "no answer's body is provided in json data" })
 
     requests[uuid_ans].answers.append(answer_body)
-
+    alive_nodes[token] = time.time()
     return jsonify({"status": "ok"})
 
 # /update route
@@ -209,6 +236,7 @@ async def answer():
 @app.route('/update')
 async def update_target():
     global requests
+    global alive_nodes
     try: data = request.json
     except: data = None
 
@@ -244,6 +272,7 @@ async def update_target():
                 "reason": f"no such target to update \"{upd_target}\""
             })
 
+    alive_nodes[token] = time.time()
     return jsonify({
         "status": "ok", 
         "uuid": nr.uuid,
@@ -259,6 +288,7 @@ async def update_target():
 @app.route("/check")
 def check_request():
     global requests
+    global alive_nodes
     try: data = request.json
     except: data = None
 
@@ -288,6 +318,7 @@ def check_request():
 
     ans = requests[req_uuid].answers
     del requests[req_uuid]
+    alive_nodes[token] = time.time()
 
     return jsonify({
         "status": "ok",

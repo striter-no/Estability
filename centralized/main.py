@@ -1,5 +1,5 @@
 import src.database as db
-import src.botprocess as net
+import botprocess as net
 
 import asyncio
 import aiogram

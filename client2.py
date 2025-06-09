@@ -55,14 +55,20 @@ async def check_new_blocks(user: User, stop_event: asyncio.Event):
     while not stop_event.is_set():
         block = await user.new_block_sync(nolog=True)
         if block:
+            print(f"[%] confirmed new block: {block.hash}")
             stop_event.set()
             return True
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
 
 async def sync_new_transactions(user: User, stop_event: asyncio.Event):
     while not stop_event.is_set():
-        block = await user.new_transac_sync(nolog=True)
+        await user.new_transac_sync(nolog=True)
         await asyncio.sleep(1)
+
+async def update_nodes_count(user: User, stop_event: asyncio.Event):
+    while not stop_event.is_set():
+        await user.upd_nodes_num(nolog=True)
+        await asyncio.sleep(3)
 
 async def answer_pending_reqs(user: User, stop_event: asyncio.Event):
     cache_hashes = []
@@ -89,7 +95,7 @@ async def answer_pending_reqs(user: User, stop_event: asyncio.Event):
 # returns: nothing, only user's blockchain changes
 async def work(user: User):
     print(f"[!] work is started")
-    last_delta = (time.time() - user.node.blockchain[-1].timestamp) if len(user.node.blockchain) > 0 else 120
+    last_delta = (time.time() - user.node.blockchain[-1].timestamp) if len(user.node.blockchain) > 0 else 0
     if len(user.node.blockchain) == 0 or (last_delta > 60):
         if (last_delta > 60):
             print(f"[!] local blockchain is old ({(last_delta)}s)")
@@ -122,9 +128,6 @@ async def work(user: User):
 
     nb = None
     for task in done:
-        if task is mine_task:
-            nb = task.result()
-            print(f"[*] new block was calculated firstly")
         if task is check_task:
             hashes = [t.hash for t in user.node.blockchain[-1].transactions] # Checking new block
             newt = []
@@ -135,48 +138,64 @@ async def work(user: User):
             user.node.transactions = newt
 
             print(f"[!] new block was calculated by another node")
+        if task is mine_task:
+            nb = task.result()
+            print(f"[*] new block was calculated firstly")
 
-    if nb and isinstance(nb, e_block.Block):
-        print(f"[+] new bits were calculated\n\t[{user.node.blockchain[-1].bits} -> {nb.bits}]")
-        print(nb.stringify())
+    # if nb and isinstance(nb, e_block.Block):
+    print(f"[+] new bits were calculated\n\t[{user.node.blockchain[-1].bits} -> {nb.bits}]")
+    print(nb.stringify())
 
-        block = await user.new_block_sync()
-        if not block:
-            print(f"[*] new block was firstly calculated after double-check!")
-            nb.phash = user.node.blockchain[-1].hash
-            # Final, third re-check
+    #    # block: e_block.Block | None = await user.new_block_sync()
+    #    # if not block:
+    # print(f"[*] new block was firstly calculated after double-check!")
+    nb.phash = user.node.blockchain[-1].hash
+    # Final, third re-check
 
-            block = await user.new_block_sync(only_check=True)
-            if block and block.timestamp < nb.timestamp:
-                print(f"[!] after third check new block was calculated earlier")
-                user.node.blockchain.append(block)
+    await user.propagate_block(nb)
 
-                hashes = [t.hash for t in block.transactions]
-                newt = []
-                for t in user.node.transactions:
-                    if not (t.hash in hashes):
-                        newt.append(t)
-                user.node.transactions = newt
-            else:
-                print(f"[**] after third check new block was REALLY calculated earlier")
-                user.node.blockchain.append(nb)
-                await user.propagate_block(nb)
+    print(f"[%] final third check")
+    
+    start = time.time()
+    while True:
+        blocks: list[e_block.Block] = await user.new_block_sync(only_check=True, multiple=True, nolog=False)
+        if (len(blocks) / user.nodes_num >= 0.51) or (time.time() - start > 3):
+            break
+        await asyncio.sleep(0.5)
+    
+    if len(blocks) == 0:
+        print(f"[!] no blocks from other miners")
+        user.node.blockchain.append(nb)
 
+        hashes = [t.hash for t in nb.transactions]
+        newt = []
+        for t in user.node.transactions:
+            if not (t.hash in hashes):
+                newt.append(t)
+        user.node.transactions = newt
+    else:
+        print(f"[^] new blocks!: {len(blocks) + 1}")
+        timestamped = {b.timestamp: b for b in blocks} | {nb.timestamp : nb}
+        earliest = sorted(timestamped)[0]
+        print(f"[&] new block: {earliest}")
+        block = timestamped[earliest]
+        print(f"[{"new block was calculated firstly" if block is nb else "new block was calculated by other miner"}]")
+        user.node.blockchain.append(block)
 
-                hashes = [t.hash for t in nb.transactions]
-                newt = []
-                for t in user.node.transactions:
-                    if not (t.hash in hashes):
-                        newt.append(t)
-                user.node.transactions = newt
-        else:
-            print(f"[!] after double-check new block was calculated by another node")
-            hashes = [t.hash for t in block.transactions]
-            newt = []
-            for t in user.node.transactions:
-                if not (t.hash in hashes):
-                    newt.append(t)
-            user.node.transactions = newt
+        hashes = [t.hash for t in block.transactions]
+        newt = []
+        for t in user.node.transactions:
+            if not (t.hash in hashes):
+                newt.append(t)
+        user.node.transactions = newt
+        # else:
+        #     print(f"[!] after double-check new block was calculated by another node")
+        #     hashes = [t.hash for t in block.transactions]
+        #     newt = []
+        #     for t in user.node.transactions:
+        #         if not (t.hash in hashes):
+        #             newt.append(t)
+        #     user.node.transactions = newt
     
     print(f"[+] new blockchain contains: {len(user.node.blockchain)} blocks:\n\t{'\n\t'.join([b.hash for b in user.node.blockchain[::-1][:5]])}")
     print('-'*50)
@@ -217,7 +236,6 @@ def load_blockchain(path: str, user: User):
     
     print(f"[+] restored {len(keys)} blocks")
 
-
 if __name__ == "__main__":
     # user = User(f"./runtime/pems/user_{str(round(time.time()*100))[::-1][:5]}.pem", "http://127.0.0.1:5000")
     
@@ -246,6 +264,7 @@ if __name__ == "__main__":
         stop_transactions = asyncio.Event()
         asyncio.create_task(answer_pending_reqs(user, stop_transactions))
         asyncio.create_task(sync_new_transactions(user, stop_transactions))
+        asyncio.create_task(update_nodes_count(user, stop_transactions))
 
         while not stop_transactions.is_set():
             await work(user)

@@ -24,7 +24,7 @@ def elapsed_time(start) -> tuple[tuple[int, int, int, float], float]:
 
 class Block:
     def __init__(self, transactions: list[tr.Transaction]):
-        self.timestamp = round(time.time())
+        self.timestamp = time.time()
         self.nonce = 0
         self.phash = "" # Previous hash
         self.bits = ""
@@ -78,7 +78,7 @@ class Block:
         genesis = Block([])
         
         genesis.phash = "0"
-        genesis.bits  = "0ff0000000000000000000000000000000000000000000000000000000000000"
+        genesis.bits  = "00ff00000000000000000000000000000000000000000000000000000000000"
         genesis.merkle = "0"
         genesis.nonce = 0
         genesis.hash = "0"
@@ -129,6 +129,9 @@ class Block:
         return hashlib.sha256(f"{self.getblob()}{self.nonce}".encode()).hexdigest()
 
     def rawme(self) -> dict:
+        if (self.phash == self.hash) and (self.hash != "0"):
+            raise RuntimeError(f"[rawme] Block {self.hash} is self-parented:\n{self.stringify()}\n")
+
         return {
             "timestamp": self.timestamp,
             "nonce": self.nonce,
@@ -150,9 +153,14 @@ class Block:
         Returns: (is_valid, error_message)
         """
 
+        print(f"[?] checking {self.hash[:5]}")
+
         # 0. Проверить сложность на адекватность
         this_period_blocks = node.blockchain[(BITS_BLOCKS_CHANGE * (len(node.blockchain) // BITS_BLOCKS_CHANGE)):]
         most_freq = most_frequent([b.bits for b in this_period_blocks])
+
+        if (self.phash == self.hash) and (self.hash != "0"):
+            raise RuntimeError(f"[checkme] Block {self.hash} is self-parented:\n{self.stringify()}\n")
 
         if self.bits < most_freq:
             return False, f"Invalid block bits (less than most_freq:{most_freq} > {self.bits})"
@@ -189,7 +197,7 @@ class Block:
 
         emission_n = 0
         for t in self.transactions:
-            s, msg = await t.checkme(len(node.blockchain), text_check)
+            s, msg = await t.checkme(node, len(node.blockchain), text_check)
             if not s:
                 return False, f"Invalid transaction: {msg}"
             if t.ttype == tr.TRANSACTION_TYPE.emission:
@@ -201,11 +209,13 @@ class Block:
         if len(self.transactions) <= 1:
             return False, "Empty transactions block"
 
+        print(f"[?!] block {self.hash} seems to be really nice!")
+
         for t in self.transactions:
-            if t.ttype == tr.TRANSACTION_TYPE.coin and node.check_balance(t.input) < t.amount: 
-                return False, f"Invalid transaction: overspending ({t.input}/{t.amount})"
             if t.ttype == tr.TRANSACTION_TYPE.emission and t.amount > self.get_local_emission(node.blockchain): 
                 return False, f"Invalid transaction: emission overspending ({t.input}/{t.amount})"
+
+        print(f"[>>] block {self.hash} is a valid block")
 
         return True, "Valid block"
 
@@ -255,4 +265,7 @@ class Block:
         block.merkle = rawdata["merkle"]
         block.transactions = [tr.Transaction.cook(rt) for rt in rawdata["transactions"]]
         
+        if (block.phash == block.hash) and block.hash != '0':
+            raise RuntimeError(f"[cook] Block {block.hash} is self-parented:\n{block.stringify()}\n")
+
         return block

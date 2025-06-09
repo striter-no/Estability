@@ -27,6 +27,7 @@ async def main():
     except:
         ofst = 0
 
+    i = 0
     async for msg in client.iter_messages(target_chat, offset_id=ofst):
         msg: th.types.Message = msg
 
@@ -44,7 +45,11 @@ async def main():
                 f.write(f"{msg.id}")
             await user.propagate_transac(t)
 
-        await asyncio.sleep(1)
+            # if i % 5 == 0 and i != 0:
+            #     input(f"> ")
+            i += 1
+
+        await asyncio.sleep(3)
 
     await client.disconnect()
 
