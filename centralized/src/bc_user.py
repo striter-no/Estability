@@ -324,7 +324,7 @@ class User:
                             data = await req.json()
                             req_uuid = data["uuid"]
                             print(f"[*] request successeded: <{req_uuid}>")
-                            await asyncio.sleep(3) # Wait for the answer
+                            # await asyncio.sleep(3) # Wait for the answer
                             i = 0
 
                             while True:

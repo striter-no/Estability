@@ -29,7 +29,7 @@ async def main():
     global process
 
     bot = aiogram.Bot(token = tgconf["API_KEY"])
-    process = net.Processor(bot, localizer, usersdb, "http://192.168.31.100:9001")
+    process = net.Processor(bot, localizer, usersdb, "http://192.168.105.107:9001")
 
     await on_start()
 

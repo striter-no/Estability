@@ -148,7 +148,7 @@ class Block:
             return hex(round(decimal.Decimal(int(self.bits, 16)) * max(decimal.Decimal(0.25), min(4, decimal.Decimal(TARGET_SECONDS / minedelta)))))[2:]
         return self.bits
     
-    async def checkme(self, node, prev_block = None, text_check: Callable | None = None, phash_agrs_check = False, pre_prev_block = None) -> tuple[bool, str]:
+    async def checkme(self, node, prev_block = None, text_check: Callable | None = None, phash_agrs_check = False, pre_prev_block = None, ignore_phash = False) -> tuple[bool, str]:
         """
         Returns: (is_valid, error_message)
         """
@@ -176,19 +176,27 @@ class Block:
 
         # 3. Эффективная проверка предыдущего блока
         non_agressive_ok = False
+        ignored_phash = False
         if prev_block:
             if self.phash != prev_block.hash and len(node.blockchain) != 0 and not phash_agrs_check:
-                return False, f"Previous hash mismatch ({self.phash} != {prev_block.hash})"
+                if not ignore_phash:
+                    return False, f"Previous hash mismatch ({self.phash} != {prev_block.hash})"
+                else:
+                    ignored_phash = True
             elif self.phash != prev_block.hash and phash_agrs_check and len(node.blockchain) != 0 and pre_prev_block:
                 # Non-agressive previous check
-                if self.phash != pre_prev_block.hash:
+                if self.phash != pre_prev_block.hash and not ignore_phash:
                     return False, f"Non-agressive phash failed ({self.phash} != {pre_prev_block.hash})"
+                elif ignore_phash:
+                    ignored_phash = True
                 else:
                     non_agressive_ok = True
         else:
             # Fallback к поиску в блокчейне (только если prev_block не передан)
-            if not self._validate_previous_hash(node.blockchain):
+            if not ignore_phash and not self._validate_previous_hash(node.blockchain):
                 return False, "Previous block not found"
+            elif ignore_phash:
+                ignored_phash = True
 
         # 4. Проверка временной метки
         s = self._validate_timestamp(prev_block)
@@ -224,7 +232,7 @@ class Block:
 
         print(f"[>>] block {self.hash} is a valid block")
 
-        return True, "non_agressive_ok" if non_agressive_ok else "Valid block"
+        return True, ("non_agressive_ok" if non_agressive_ok else "Valid block") if not ignored_phash else "ignored_phash"
 
     def _validate_previous_hash(self, blockchain: list) -> bool:
         """Эффективная проверка предыдущего хеша"""

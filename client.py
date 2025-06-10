@@ -3,7 +3,7 @@ from src.text_verificator import Hands
 
 from colorama import Fore, Back
 import asyncio
-import time, json
+import time, json, sys, random
 
 import src.estab.block as e_block
 import src.estab.transaction as e_tran
@@ -59,6 +59,7 @@ async def check_new_blocks(user: User, stop_event: asyncio.Event):
         if res:
             block, _ = res
             print(f"[%] confirmed new block: {block.hash}")
+            sys.stdout.flush()
             stop_event.set()
             return True
         await asyncio.sleep(1)
@@ -75,6 +76,7 @@ async def update_nodes_count(user: User, stop_event: asyncio.Event):
 
 async def answer_pending_reqs(user: User, stop_event: asyncio.Event):
     cache_hashes = []
+
     while not stop_event.is_set():
         preq = await user.check_pending_req(True) # jupdate
         if preq and not (preq.uuid in cache_hashes):
@@ -87,6 +89,29 @@ async def answer_pending_reqs(user: User, stop_event: asyncio.Event):
             # is server-side
         await asyncio.sleep(2)
 
+async def last_six_sync(user: User):
+    if user.mined_blocks >= 6:
+        user.mined_blocks = 0
+
+        print(f"{Back.YELLOW}[+] already mined 6 or more blocks{Back.RESET}")
+        print(f"[*] checking leading blockchain thread")
+        answers = await user.full_bc_sync(self_verif=False)
+        if answers:
+            raw_blockchain, reason = e_ver.NodeVerificator.fsync_verifacation(answers)
+            
+            # If user's thread is not most popular or the longest chain - synchronize blockchain 
+            if (reason in ["most_popular", "longest chain"]) and (e_block.Block.cook(raw_blockchain[-1]).hash != user.node.blockchain[-1].hash):
+                print(f"[!] current thread is not the most popular one, re-syncing")
+                print(f"[!] last hashes does not match: {e_block.Block.cook(raw_blockchain[-1]).hash} != {user.node.blockchain[-1].hash}")
+                user.node.blockchain = [
+                    e_block.Block.cook(raw) for raw in raw_blockchain
+                ]
+                user.node.transactions = []
+            else:
+                print(f"[$] current thread is the most popular/the longest one")
+        else:
+            print(f"[!] no answers were got")
+
 # function: work
 # need: 
 #   1. Syncs blockchain if node is new
@@ -98,6 +123,7 @@ async def answer_pending_reqs(user: User, stop_event: asyncio.Event):
 # returns: nothing, only user's blockchain changes
 async def work(user: User):
     print(f"[!] work is started")
+
     last_delta = (time.time() - user.node.blockchain[-1].timestamp) if len(user.node.blockchain) > 0 else 0
     if len(user.node.blockchain) == 0 or (last_delta > (TIME_DIFF + 1)):
         if (last_delta > (TIME_DIFF + 1)):
@@ -158,12 +184,37 @@ async def work(user: User):
         
         start = time.time()
         blocks: list[tuple[e_block.Block, bool]] = []
+        clone: list[tuple[e_block.Block, bool]] = []
         while True:
-            blocks += await user.new_block_sync(only_check=True, multiple=True, nolog=True, non_agressive=True)
+            _blocks, _clone = await user.new_block_sync(only_check=True, multiple=True, nolog=True, non_agressive=True, no_phash_clone=True)
+            
+            blocks += _blocks
+            clone += _clone
+
             if (len(blocks) / user.nodes_num >= 0.51) or (time.time() - start > 5): # +1 for self block is not needed
                 break
             await asyncio.sleep(0.5)
         
+        phashes = [b.phash for b, _ in clone]
+        lphs = len(phashes)
+        leading_phash = nb.phash
+        for ph in phashes:
+            if phashes.count(ph) / lphs >= 0.51:
+                leading_phash = ph
+                break
+
+        diff_bc = leading_phash != nb.phash # different blockchain from most popular or not
+
+        if diff_bc:
+            print(f"[$$!] Current blockchain is not leading {leading_phash} != {nb.phash}")
+            await asyncio.sleep(random.uniform(1, 3))
+            await user.full_bc_sync()
+            user.node.transactions = []
+
+            print(f"[+] new blockchain contains: {len(user.node.blockchain)} blocks:\n\t{'\n\t'.join([b.hash for b in user.node.blockchain[::-1][:5]])}")
+            print('-'*50)
+            return
+
         if len(blocks) == 0:
             print(f"{Fore.MAGENTA}[!] no blocks from other miners{Fore.RESET}")
             user.mined_blocks += 1
@@ -205,28 +256,8 @@ async def work(user: User):
                 if not (t.hash in hashes):
                     newt.append(t)
             user.node.transactions = newt
-    
-    # if user.mined_blocks >= 6:
-    #     user.mined_blocks = 0
 
-    #     print(f"{Back.YELLOW}[+] already mined 6 or more blocks{Back.RESET}")
-    #     print(f"[*] checking leading blockchain thread")
-    #     answers = await user.full_bc_sync(self_verif=False)
-    #     if answers:
-    #         raw_blockchain, reason = e_ver.NodeVerificator.fsync_verifacation(answers)
-            
-    #         # If user's thread is not most popular or the longest chain - synchronize blockchain 
-    #         if (reason in ["most_popular", "longest chain"]) and (e_block.Block.cook(raw_blockchain[-1]).hash != user.node.blockchain[-1].hash):
-    #             print(f"[!] current thread is not the most popular one, re-syncing")
-    #             print(f"[!] last hashes does not match: {e_block.Block.cook(raw_blockchain[-1]).hash} != {user.node.blockchain[-1].hash}")
-    #             user.node.blockchain = [
-    #                 e_block.Block.cook(raw) for raw in raw_blockchain
-    #             ]
-    #             user.node.transactions = []
-    #         else:
-    #             print(f"[$] current thread is the most popular/the longest one")
-    #     else:
-    #         print(f"[!] no answers were got")
+    # await last_six_sync(user)
 
     print(f"[+] new blockchain contains: {len(user.node.blockchain)} blocks:\n\t{'\n\t'.join([b.hash for b in user.node.blockchain[::-1][:5]])}")
     print('-'*50)
@@ -270,6 +301,7 @@ def load_blockchain(path: str, user: User):
 if __name__ == "__main__":
     # user = User(f"./runtime/pems/user_{str(round(time.time()*100))[::-1][:5]}.pem", "http://127.0.0.1:5000")
     
+    ipconf = json.load(open('./configs/ip_config.json'))
 
     pemfile = input("Enter path to pem file [quitearno] by default: ") or "quitearno"
     bc_db = input("Enter path to database file [quitearno_bc] by default: ") or "quitearno_bc"
@@ -281,7 +313,7 @@ if __name__ == "__main__":
 
     config = json.load(open("./configs/tg_app_conf.json"))
     hands = Hands(verif, config["API_HASH"], config["API_ID"])
-    user = User(pemfile, "http://192.168.31.100:9001")
+    user = User(pemfile, f"http://{ipconf["serv_ip"]}:{ipconf["serv_port"]}")
     user.set_text_transaction_check(text_transaction_check)
 
     async def main():

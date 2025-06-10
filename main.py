@@ -16,7 +16,7 @@
 
 from flask import Flask, jsonify, request
 import src.database as db
-import asyncio
+import asyncio, json
 import uuid
 import time
 
@@ -303,11 +303,11 @@ def check_request():
     if token is None:    return jsonify({ "status": "fatal-error", "reason": "no token is provided in json data" })
     if req_uuid is None: return jsonify({ "status": "fatal-error", "reason": "no request's uuid is provided in json data" })
 
-    if not requests[req_uuid].immediate_ans and (time.time() - requests[req_uuid].timestamp < 3):
-        return jsonify({
-            "status": "warning",
-            "reason": "request's time to answer is not done yet"
-        })
+    # if not requests[req_uuid].immediate_ans and (time.time() - requests[req_uuid].timestamp < 3):
+    #     return jsonify({
+    #         "status": "warning",
+    #         "reason": "request's time to answer is not done yet"
+    #     })
     
     rr = requests[req_uuid]
     if rr.immediate_ans:
@@ -365,5 +365,6 @@ def clone_miner():
         download_name='clone_miner.zip'
     )
 
-if __name__ == '__main__':
-    app.run(host="192.168.31.100", port=9001)
+if __name__ == '__main__':  
+    ipconf = json.load(open('./configs/ip_config.json'))
+    app.run(host=ipconf["serv_lip"], port=ipconf["serv_lport"])

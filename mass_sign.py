@@ -17,7 +17,9 @@ async def main():
     await client.start()
     await client.connect()
 
-    user: api.User = api.User('./runtime/pems/quitearno.pem', "http://192.168.31.100:9001")
+    ipconf = jn.load(open('./configs/ip_config.json'))
+
+    user: api.User = api.User('./runtime/pems/quitearno.pem', f"http://{ipconf["serv_ip"]}:{ipconf["serv_port"]}")
     target_chat_id = input(f"Enter chat to mass-sign > ").strip() or "-1001236072132"
     target_chat = await client.get_entity(int(target_chat_id) if (target_chat_id.isdigit() or (target_chat_id[0] == '-' and target_chat_id[1:].isdigit())) else target_chat_id)
 
