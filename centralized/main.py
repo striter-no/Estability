@@ -28,8 +28,10 @@ async def main():
     global bot
     global process
 
+    ipconf = json.load(open('./configs/ip_config.json'))
+
     bot = aiogram.Bot(token = tgconf["API_KEY"])
-    process = net.Processor(bot, localizer, usersdb, "http://192.168.105.107:9001")
+    process = net.Processor(bot, localizer, usersdb, f"http://{ipconf["serv_ip"]}:{ipconf["serv_port"]}")
 
     await on_start()
 
