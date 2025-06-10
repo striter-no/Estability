@@ -55,6 +55,7 @@ def load_blockchain(path: str, user: User):
 if __name__ == "__main__":
     # user = User(f"./runtime/pems/user_{str(round(time.time()*100))[::-1][:5]}.pem", "http://127.0.0.1:5000")
     
+    ipconf = json.load(open('./configs/ip_config.json'))
 
     pemfile = input("Enter path to pem file [quitearno] by default: ") or "quitearno"
     bc_db = input("Enter path to database file [quitearno_bc] by default: ") or "quitearno_bc"
@@ -63,7 +64,7 @@ if __name__ == "__main__":
     bc_db = f"./runtime/blockchains/{bc_db}.sqlite3"
 
     config = json.load(open("./configs/tg_app_conf.json"))
-    user = User(pemfile, "http://192.168.31.100:9001")
+    user = User(pemfile, f"http://{ipconf["serv_ip"]}:{ipconf["serv_port"]}")
 
     async def main():
         start = time.time()
