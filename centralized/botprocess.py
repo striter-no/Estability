@@ -19,12 +19,16 @@ class Localizer:
 
 class Processor:
     
-    def __init__(self, bot: aiogram.Bot, localizer: Localizer, usersdb: db.DataBase, node_ip: str):
+    def __init__(self, bot: aiogram.Bot, localizer: Localizer, usersdb: db.DataBase, finance_db: db.DataBase, node_ip: str, admins: list[int] = []):
         self.localizer = localizer
         self.usersdb = usersdb
         self.bot = bot
         self.temp_usdb = db.DataBase('./runtime/databases/temp_usdb.sqlite3')
+        self.finance_db = finance_db
         self.node_ip = node_ip
+        self.admins = admins
+
+        self.finance_db.ensure_set("capitalization", 0)
 
     async def cmd_process(self, text: str, msg: aiogram.types.Message):
         cmd = text[1:].split()[0]
@@ -35,6 +39,111 @@ class Processor:
         
         if cmd == "help":
             await msg.answer(self.localizer.get("help"))
+
+        if cmd == "upd_capt":
+            if not (msg.from_user.id in self.admins):
+                return
+
+            if len(args) < 1:
+                await msg.answer(
+                    "You need to add to the arguments the amount of money you have for this cryptocurrency",
+                    parse_mode = "Markdown"
+                )
+                return
+            amount = float(args[0])
+            self.finance_db.set("capitalization", amount)
+            await msg.answer(f"Capitalization has been updated ({amount}₽)")
+
+        if cmd == "price":
+            token = self.temp_usdb.get(msg.from_user.id)
+            
+            if token is None:
+                await msg.answer(
+                    "You don't have your token yet. Make a wallet first: /newwallet or recover previous"
+                )
+                return
+
+            curr_addr = None
+            sha_token = fastsha256(token)
+            for addr in self.usersdb.all():
+                if self.usersdb.get(addr) == sha_token:
+                    curr_addr = addr
+            
+            if curr_addr is None:
+                await msg.answer(
+                    "Your token is invalid"
+                )
+                return
+            
+            user: api.User = api.User(f"./runtime/private_keys/{fastsha256(token)}.pem", self.node_ip)
+            msg_id = (await msg.answer(
+                "Please wait about 3s"
+            )).message_id
+            await user.full_bc_sync()
+
+            coin_produced = 0
+            for block in user.node.blockchain[::-1]:
+                for transaction in block.transactions:
+                    if transaction.ttype == api.e_tran.TRANSACTION_TYPE.emission:
+                        coin_produced += transaction.amount
+            
+            cp = coin_produced
+            if cp > 0:
+                await msg.answer(
+                    f"Coin price is now about *{round(self.finance_db.get("capitalization") / cp, 6)}₽* for 1EST",
+                    parse_mode = "Markdown"
+                )
+            else:
+                await msg.answer(
+                    f"Coin will have {self.finance_db.get("capitalization")}₽ capitalization but now blockchain does not contain any cryptocurrency",
+                    parse_mode = "Markdown"
+                )
+
+        if cmd == "real":
+            token = self.temp_usdb.get(msg.from_user.id)
+            
+            if token is None:
+                await msg.answer(
+                    "You don't have your token yet. Make a wallet first: /newwallet or recover previous"
+                )
+                return
+
+            curr_addr = None
+            sha_token = fastsha256(token)
+            for addr in self.usersdb.all():
+                if self.usersdb.get(addr) == sha_token:
+                    curr_addr = addr
+            
+            if curr_addr is None:
+                await msg.answer(
+                    "Your token is invalid"
+                )
+                return
+            
+            user: api.User = api.User(f"./runtime/private_keys/{fastsha256(token)}.pem", self.node_ip)
+            msg_id = (await msg.answer(
+                "Please wait about 3s"
+            )).message_id
+            await user.full_bc_sync()
+            balance = user.node.check_balance(curr_addr)
+
+            coin_produced = 0
+            for block in user.node.blockchain[::-1]:
+                for transaction in block.transactions:
+                    if transaction.ttype == api.e_tran.TRANSACTION_TYPE.emission:
+                        coin_produced += transaction.amount
+            
+            cp = coin_produced
+            if cp > 0:
+                await msg.answer(
+                    f"Now you have {balance}EST and it is about {balance * (self.finance_db.get("capitalization") / cp)}₽",
+                    parse_mode = "Markdown"
+                )
+            else:
+                await msg.answer(
+                    f"Coin will have {self.finance_db.get("capitalization")}₽ capitalization but now blockchain does not contain any cryptocurrency",
+                    parse_mode = "Markdown"
+                )
 
         if cmd == "mined":
             token = self.temp_usdb.get(msg.from_user.id)
